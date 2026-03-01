@@ -1,1 +1,6 @@
 /target
+*.env
+*.pem
+*.key
+credentials.json
+plan.md
