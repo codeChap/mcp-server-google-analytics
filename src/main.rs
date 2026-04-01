@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod config;
 mod params;
 mod server;
 
@@ -22,11 +23,31 @@ async fn main() -> Result<()> {
 
     info!("initializing Google Analytics MCP server");
 
-    // Single HTTP client shared between auth and API calls.
     let http = GoogleAnalyticsClient::build_http_client();
-    let auth = GoogleAuth::new(http.clone())?;
-    let client = GoogleAnalyticsClient::new(auth, http);
-    let server = GoogleAnalyticsServer::new(client);
+
+    let clients = match config::load_config()? {
+        Some(cfg) => {
+            // Multi-account: one client per config entry.
+            info!("loaded {} account(s) from config.toml", cfg.accounts.len());
+            let mut clients = Vec::with_capacity(cfg.accounts.len());
+            for account in &cfg.accounts {
+                let path = config::resolve_credentials_path(&account.credentials);
+                let auth = GoogleAuth::from_credentials(&path, http.clone())?;
+                let client = GoogleAnalyticsClient::new(auth, http.clone());
+                clients.push((account.name.clone(), client));
+            }
+            clients
+        }
+        None => {
+            // Single account: discover credentials via ADC chain.
+            let path = auth::discover_credentials_path()?;
+            let auth = GoogleAuth::from_credentials(&path, http.clone())?;
+            let client = GoogleAnalyticsClient::new(auth, http);
+            vec![("default".to_string(), client)]
+        }
+    };
+
+    let server = GoogleAnalyticsServer::new(clients);
 
     info!("starting MCP server via stdio");
     let service = server.serve(stdio()).await?;

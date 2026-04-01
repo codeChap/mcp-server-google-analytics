@@ -9,7 +9,7 @@ name = "google-analytics-mcp"
 path = "src/main.rs"
 
 [dependencies]
-rmcp = { version = "0.8", features = ["server", "transport-io"] }
+rmcp = { version = "1.2", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,6 +20,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "6"
+toml = "0.8"
 jsonwebtoken = "9"
 url = "2"
 

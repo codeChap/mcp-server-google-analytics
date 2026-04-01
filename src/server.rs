@@ -6,18 +6,46 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::api::{
-    GoogleAnalyticsClient, build_realtime_report_request, build_report_request,
+    ApiError, GoogleAnalyticsClient, build_realtime_report_request, build_report_request,
 };
 use crate::params::{PropertyIdParams, RunRealtimeReportParams, RunReportParams};
 
-/// MCP server for Google Analytics 4.
+/// A named GA client — one per Google account.
+struct NamedClient {
+    name: String,
+    client: GoogleAnalyticsClient,
+}
+
+/// Operation to execute against a specific GA4 property.
+enum PropertyOp {
+    GetDetails,
+    ListAdsLinks,
+    ListAnnotations,
+    GetMetadata,
+    RunReport(Value),
+    RunRealtimeReport(Value),
+}
+
+/// MCP server for Google Analytics 4 — supports multiple Google accounts.
 #[derive(Clone)]
 pub struct GoogleAnalyticsServer {
-    client: Arc<GoogleAnalyticsClient>,
+    clients: Arc<Vec<NamedClient>>,
+    /// Cache: normalized property ID -> index into `clients`.
+    property_map: Arc<Mutex<HashMap<String, usize>>>,
     tool_router: ToolRouter<Self>,
+}
+
+/// Normalize a property ID to the bare numeric string for use as a cache key.
+fn normalize_property_id(id: &str) -> String {
+    id.trim()
+        .strip_prefix("properties/")
+        .unwrap_or(id.trim())
+        .to_string()
 }
 
 impl GoogleAnalyticsServer {
@@ -29,27 +57,151 @@ impl GoogleAnalyticsServer {
     fn api_error(e: impl std::fmt::Display) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::error(vec![Content::text(e.to_string())]))
     }
+
+    /// Aggregate account summaries from all connected Google accounts.
+    async fn get_all_account_summaries(&self) -> Result<CallToolResult, McpError> {
+        let mut all = Vec::new();
+        let multi = self.clients.len() > 1;
+
+        for (idx, nc) in self.clients.iter().enumerate() {
+            match nc.client.get_account_summaries().await {
+                Ok(Value::Array(accounts)) => {
+                    // Populate the property -> account cache.
+                    for account in &accounts {
+                        if let Some(props) =
+                            account.get("propertySummaries").and_then(|v| v.as_array())
+                        {
+                            for prop in props {
+                                if let Some(pid) = prop.get("property").and_then(|v| v.as_str()) {
+                                    let key = normalize_property_id(pid);
+                                    self.property_map.lock().await.insert(key, idx);
+                                }
+                            }
+                        }
+                    }
+
+                    if multi {
+                        // Tag each account summary with its config name.
+                        for mut account in accounts {
+                            if let Some(obj) = account.as_object_mut() {
+                                obj.insert("_account".into(), Value::String(nc.name.clone()));
+                            }
+                            all.push(account);
+                        }
+                    } else {
+                        all.extend(accounts);
+                    }
+                }
+                Ok(other) => all.push(other),
+                Err(e) if multi => {
+                    // In multi-account mode, report the error inline but keep going.
+                    all.push(serde_json::json!({
+                        "_account": nc.name,
+                        "_error": e.to_string(),
+                    }));
+                }
+                Err(e) => return Self::api_error(e),
+            }
+        }
+
+        Self::ok_json(&Value::Array(all))
+    }
+
+    /// Execute a property-scoped operation, routing to the correct Google account.
+    async fn exec_property_op(
+        &self,
+        property_id: &str,
+        op: &PropertyOp,
+    ) -> Result<CallToolResult, McpError> {
+        let key = normalize_property_id(property_id);
+
+        // Check cache.
+        let cached_idx = self.property_map.lock().await.get(&key).copied();
+
+        // Single client — skip the search logic.
+        if self.clients.len() == 1 {
+            return match self.exec_op_on(0, property_id, op).await {
+                Ok(data) => Self::ok_json(&data),
+                Err(e) => Self::api_error(e),
+            };
+        }
+
+        // Try cached client first.
+        if let Some(idx) = cached_idx {
+            match self.exec_op_on(idx, property_id, op).await {
+                Ok(data) => return Self::ok_json(&data),
+                Err(ApiError::Api { status: 403, .. }) => {
+                    // Permission changed — clear stale entry and search.
+                    self.property_map.lock().await.remove(&key);
+                }
+                Err(e) => return Self::api_error(e),
+            }
+        }
+
+        // Try all remaining clients.
+        let mut last_err = String::new();
+        for idx in 0..self.clients.len() {
+            if cached_idx == Some(idx) {
+                continue; // Already tried.
+            }
+            match self.exec_op_on(idx, property_id, op).await {
+                Ok(data) => {
+                    self.property_map.lock().await.insert(key, idx);
+                    return Self::ok_json(&data);
+                }
+                Err(e) => last_err = e.to_string(),
+            }
+        }
+
+        Self::api_error(format!(
+            "no account has access to property {property_id}: {last_err}"
+        ))
+    }
+
+    /// Execute an operation using a specific client.
+    async fn exec_op_on(
+        &self,
+        idx: usize,
+        property_id: &str,
+        op: &PropertyOp,
+    ) -> Result<Value, ApiError> {
+        let client = &self.clients[idx].client;
+        match op {
+            PropertyOp::GetDetails => client.get_property_details(property_id).await,
+            PropertyOp::ListAdsLinks => client.list_google_ads_links(property_id).await,
+            PropertyOp::ListAnnotations => client.list_property_annotations(property_id).await,
+            PropertyOp::GetMetadata => client.get_metadata(property_id).await,
+            PropertyOp::RunReport(body) => client.run_report(property_id, body).await,
+            PropertyOp::RunRealtimeReport(body) => {
+                client.run_realtime_report(property_id, body).await
+            }
+        }
+    }
 }
 
 #[tool_router]
 impl GoogleAnalyticsServer {
-    pub fn new(client: GoogleAnalyticsClient) -> Self {
+    pub fn new(clients: Vec<(String, GoogleAnalyticsClient)>) -> Self {
+        let named: Vec<NamedClient> = clients
+            .into_iter()
+            .map(|(name, client)| NamedClient { name, client })
+            .collect();
         Self {
-            client: Arc::new(client),
+            clients: Arc::new(named),
+            property_map: Arc::new(Mutex::new(HashMap::new())),
             tool_router: Self::tool_router(),
         }
     }
 
     #[tool(
-        description = "Retrieves all Google Analytics account summaries the authenticated user \
-                        has access to, including account names and their GA4 properties. \
+        description = "Retrieves all Google Analytics account summaries the authenticated user(s) \
+                        have access to, including account names and their GA4 properties. \
+                        When multiple accounts are configured, results include an _account field \
+                        identifying which account owns each summary. \
                         Use this first to discover available property IDs. No parameters required."
     )]
     async fn get_account_summaries(&self) -> Result<CallToolResult, McpError> {
-        match self.client.get_account_summaries().await {
-            Ok(data) => Self::ok_json(&data),
-            Err(e) => Self::api_error(e),
-        }
+        self.get_all_account_summaries().await
     }
 
     #[tool(
@@ -61,10 +213,8 @@ impl GoogleAnalyticsServer {
         &self,
         Parameters(p): Parameters<PropertyIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.client.get_property_details(&p.property_id).await {
-            Ok(data) => Self::ok_json(&data),
-            Err(e) => Self::api_error(e),
-        }
+        self.exec_property_op(&p.property_id, &PropertyOp::GetDetails)
+            .await
     }
 
     #[tool(
@@ -75,10 +225,8 @@ impl GoogleAnalyticsServer {
         &self,
         Parameters(p): Parameters<PropertyIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.client.list_google_ads_links(&p.property_id).await {
-            Ok(data) => Self::ok_json(&data),
-            Err(e) => Self::api_error(e),
-        }
+        self.exec_property_op(&p.property_id, &PropertyOp::ListAdsLinks)
+            .await
     }
 
     #[tool(
@@ -90,10 +238,8 @@ impl GoogleAnalyticsServer {
         &self,
         Parameters(p): Parameters<PropertyIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.client.list_property_annotations(&p.property_id).await {
-            Ok(data) => Self::ok_json(&data),
-            Err(e) => Self::api_error(e),
-        }
+        self.exec_property_op(&p.property_id, &PropertyOp::ListAnnotations)
+            .await
     }
 
     #[tool(
@@ -105,10 +251,8 @@ impl GoogleAnalyticsServer {
         &self,
         Parameters(p): Parameters<PropertyIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.client.get_metadata(&p.property_id).await {
-            Ok(data) => Self::ok_json(&data),
-            Err(e) => Self::api_error(e),
-        }
+        self.exec_property_op(&p.property_id, &PropertyOp::GetMetadata)
+            .await
     }
 
     #[tool(
@@ -150,10 +294,8 @@ impl GoogleAnalyticsServer {
             p.return_property_quota,
         );
 
-        match self.client.run_report(&p.property_id, body).await {
-            Ok(data) => Self::ok_json(&data),
-            Err(e) => Self::api_error(e),
-        }
+        self.exec_property_op(&p.property_id, &PropertyOp::RunReport(body))
+            .await
     }
 
     #[tool(
@@ -182,33 +324,24 @@ impl GoogleAnalyticsServer {
             p.return_property_quota,
         );
 
-        match self.client.run_realtime_report(&p.property_id, body).await {
-            Ok(data) => Self::ok_json(&data),
-            Err(e) => Self::api_error(e),
-        }
+        self.exec_property_op(&p.property_id, &PropertyOp::RunRealtimeReport(body))
+            .await
     }
 }
 
 #[tool_handler]
 impl ServerHandler for GoogleAnalyticsServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::default(),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "google-analytics-mcp".into(),
-                title: None,
-                version: env!("CARGO_PKG_VERSION").into(),
-                icons: None,
-                website_url: None,
-            },
-            instructions: Some(
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new(
+                "google-analytics-mcp",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions(
                 "Google Analytics 4 MCP server. Provides read-only access to GA4 \
                  accounts, properties, reports, and realtime data via the Analytics \
-                 Admin and Data APIs. Start with get_account_summaries to discover \
-                 available property IDs."
-                    .into(),
-            ),
-        }
+                 Admin and Data APIs. Supports multiple Google accounts — start with \
+                 get_account_summaries to discover available property IDs.",
+            )
     }
 }

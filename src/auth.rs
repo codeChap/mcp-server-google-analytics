@@ -2,11 +2,13 @@ use anyhow::{Context, Result, bail};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tracing::{debug, info};
+
+use crate::config;
 
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const ANALYTICS_SCOPE: &str = "https://www.googleapis.com/auth/analytics.readonly";
@@ -53,27 +55,25 @@ struct CachedToken {
     expires_at: u64,
 }
 
-/// Handles Google Application Default Credentials (ADC) authentication.
+/// Handles Google OAuth2 authentication for a single set of credentials.
 pub struct GoogleAuth {
     credentials: Credentials,
     http: Client,
     cached_token: Arc<Mutex<Option<CachedToken>>>,
-    /// Quota project ID from ADC or GOOGLE_PROJECT_ID env var.
+    /// Quota project ID from the credentials file or GOOGLE_PROJECT_ID env var.
     quota_project: Option<String>,
 }
 
 impl GoogleAuth {
-    /// Create a new GoogleAuth by discovering credentials via ADC.
-    /// Accepts a shared `reqwest::Client` to avoid duplicate connection pools.
-    pub fn new(http: Client) -> Result<Self> {
-        let creds_path = discover_credentials_path()?;
-        info!("loading credentials from {}", creds_path.display());
+    /// Create a new GoogleAuth from an explicit credentials file path.
+    pub fn from_credentials(path: &Path, http: Client) -> Result<Self> {
+        info!("loading credentials from {}", path.display());
 
-        let content = std::fs::read_to_string(&creds_path)
-            .with_context(|| format!("failed to read credentials: {}", creds_path.display()))?;
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read credentials: {}", path.display()))?;
 
         let credentials: Credentials = serde_json::from_str(&content)
-            .with_context(|| format!("failed to parse credentials: {}", creds_path.display()))?;
+            .with_context(|| format!("failed to parse credentials: {}", path.display()))?;
 
         // Extract quota_project_id from the raw JSON (present in both credential types).
         let quota_project = std::env::var("GOOGLE_PROJECT_ID").ok().or_else(|| {
@@ -211,8 +211,13 @@ impl GoogleAuth {
     }
 }
 
-/// Discover the credentials file path via ADC resolution order.
-fn discover_credentials_path() -> Result<PathBuf> {
+/// Discover the credentials file path when no config.toml is present.
+///
+/// Resolution order:
+///   1. GOOGLE_APPLICATION_CREDENTIALS env var
+///   2. Project-specific: ~/.config/mcp-server-google-analytics/credentials.json
+///   3. Default ADC: ~/.config/gcloud/application_default_credentials.json
+pub fn discover_credentials_path() -> Result<PathBuf> {
     // 1. GOOGLE_APPLICATION_CREDENTIALS env var.
     if let Ok(path) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
         let p = PathBuf::from(&path);
@@ -225,7 +230,13 @@ fn discover_credentials_path() -> Result<PathBuf> {
         );
     }
 
-    // 2. Default ADC location from gcloud.
+    // 2. Project-specific credentials (immune to gcloud CLI overwrites).
+    let project_path = config::config_dir().join("credentials.json");
+    if project_path.exists() {
+        return Ok(project_path);
+    }
+
+    // 3. Default ADC location from gcloud.
     let default_path = default_adc_path();
     if default_path.exists() {
         return Ok(default_path);
@@ -234,9 +245,11 @@ fn discover_credentials_path() -> Result<PathBuf> {
     bail!(
         "No Google credentials found.\n\
          Either:\n  \
-         1. Set GOOGLE_APPLICATION_CREDENTIALS to a service account key JSON file, or\n  \
+         1. Create ~/.config/mcp-server-google-analytics/config.toml with account entries, or\n  \
          2. Run: gcloud auth application-default login \
-         --scopes=https://www.googleapis.com/auth/analytics.readonly"
+         --scopes=https://www.googleapis.com/auth/analytics.readonly \
+         and copy to ~/.config/mcp-server-google-analytics/credentials.json, or\n  \
+         3. Set GOOGLE_APPLICATION_CREDENTIALS to a credentials JSON file"
     );
 }
 

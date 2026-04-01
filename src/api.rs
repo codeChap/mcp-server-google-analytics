@@ -179,22 +179,22 @@ impl GoogleAnalyticsClient {
     pub async fn run_report(
         &self,
         property_id: &str,
-        request_body: Value,
+        request_body: &Value,
     ) -> Result<Value, ApiError> {
         let rn = property_resource_name(property_id);
         let url = format!("{DATA_V1BETA}/{rn}:runReport");
-        self.post(&url, &request_body, REPORT_TIMEOUT).await
+        self.post(&url, request_body, REPORT_TIMEOUT).await
     }
 
     /// Run a realtime report.
     pub async fn run_realtime_report(
         &self,
         property_id: &str,
-        request_body: Value,
+        request_body: &Value,
     ) -> Result<Value, ApiError> {
         let rn = property_resource_name(property_id);
         let url = format!("{DATA_V1BETA}/{rn}:runRealtimeReport");
-        self.post(&url, &request_body, REPORT_TIMEOUT).await
+        self.post(&url, request_body, REPORT_TIMEOUT).await
     }
 }
 
