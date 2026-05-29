@@ -13,6 +13,13 @@ pub struct Config {
 pub struct AccountConfig {
     pub name: String,
     pub credentials: String,
+    /// OAuth client ID — used by the `login` tool. Optional: if missing, the
+    /// existing credentials file (if any) is consulted for its client_id.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// OAuth client secret — paired with `client_id` above.
+    #[serde(default)]
+    pub client_secret: Option<String>,
 }
 
 /// Config directory: ~/.config/mcp-server-google-analytics/

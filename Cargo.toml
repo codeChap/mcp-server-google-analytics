@@ -23,6 +23,7 @@ dirs = "6"
 toml = "0.8"
 jsonwebtoken = "9"
 url = "2"
+open = "5"
 
 [profile.release]
 lto = true

@@ -2,6 +2,18 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
+/// Parameters for the `login` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LoginParams {
+    #[schemars(
+        description = "The account name from config.toml ([[accounts]] `name` field) to \
+                        re-authenticate. Starts a loopback OAuth flow, opens the consent URL \
+                        in the default browser, captures the callback, and writes a new \
+                        refresh_token to that account's credentials file."
+    )]
+    pub name: String,
+}
+
 /// Parameters for tools that only need a property ID.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PropertyIdParams {

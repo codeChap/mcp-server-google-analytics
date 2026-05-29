@@ -13,7 +13,8 @@ use tokio::sync::Mutex;
 use crate::api::{
     ApiError, GoogleAnalyticsClient, build_realtime_report_request, build_report_request,
 };
-use crate::params::{PropertyIdParams, RunRealtimeReportParams, RunReportParams};
+use crate::login;
+use crate::params::{LoginParams, PropertyIdParams, RunRealtimeReportParams, RunReportParams};
 
 /// A named GA client — one per Google account.
 struct NamedClient {
@@ -296,6 +297,29 @@ impl GoogleAnalyticsServer {
 
         self.exec_property_op(&p.property_id, &PropertyOp::RunReport(body))
             .await
+    }
+
+    #[tool(
+        description = "Re-authenticate a configured Google account via interactive OAuth. \
+                        Starts a local loopback listener, opens Google's consent screen in \
+                        the default browser, captures the callback, and writes a new \
+                        refresh_token to the account's credentials file. \
+                        Use when an existing refresh_token has been revoked or expired. \
+                        The MCP server must be restarted after success for the new token \
+                        to take effect. \
+                        Requires an OAuth Desktop-app client_id/client_secret, either in \
+                        the [[accounts]] entry in config.toml or already present in the \
+                        existing credentials file."
+    )]
+    async fn login(
+        &self,
+        Parameters(p): Parameters<LoginParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let http = GoogleAnalyticsClient::build_http_client();
+        match login::perform_login(&p.name, &http).await {
+            Ok(msg) => Ok(CallToolResult::success(vec![Content::text(msg)])),
+            Err(e) => Self::api_error(e),
+        }
     }
 
     #[tool(
