@@ -95,6 +95,127 @@ pub struct RunReportParams {
     pub return_property_quota: Option<bool>,
 }
 
+/// Parameters for the `create_custom_dimension` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateCustomDimensionParams {
+    #[schemars(
+        description = "GA4 property ID. Accepts: bare number (12345), string (\"12345\"), \
+                        or resource name (\"properties/12345\")"
+    )]
+    pub property_id: String,
+
+    #[schemars(
+        description = "The event parameter (or user property) name this dimension is registered \
+                        against, e.g. \"website_id\", \"suburb\", \"city\". Max 24 chars for \
+                        EVENT scope, 24 for USER scope. Cannot be changed after creation."
+    )]
+    pub parameter_name: String,
+
+    #[schemars(description = "Human-readable display name shown in the GA UI, e.g. \"Website ID\".")]
+    pub display_name: String,
+
+    #[schemars(
+        description = "Scope of the dimension: \"EVENT\" (event parameter), \"USER\" (user \
+                        property), or \"ITEM\" (ecommerce item parameter). Defaults to \"EVENT\"."
+    )]
+    pub scope: Option<String>,
+
+    #[schemars(description = "Optional description of the custom dimension (max 150 chars).")]
+    pub description: Option<String>,
+
+    #[schemars(
+        description = "EVENT-scope only: if true, this dimension is NOT sent to Google signals / \
+                        used for ads personalization. Optional."
+    )]
+    pub disallow_ads_personalization: Option<bool>,
+}
+
+/// Parameters for the `archive_custom_dimension` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ArchiveCustomDimensionParams {
+    #[schemars(description = "GA4 property ID (bare number, string, or \"properties/12345\").")]
+    pub property_id: String,
+
+    #[schemars(
+        description = "The trailing ID of the custom dimension to archive — the last segment of \
+                        its resource name (e.g. \"3\" from \"properties/123/customDimensions/3\"). \
+                        Use list_custom_dimensions to find it."
+    )]
+    pub custom_dimension_id: String,
+}
+
+/// Parameters for the `create_key_event` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateKeyEventParams {
+    #[schemars(description = "GA4 property ID (bare number, string, or \"properties/12345\").")]
+    pub property_id: String,
+
+    #[schemars(
+        description = "The event name to mark as a key event (conversion), e.g. \"enquiry\", \
+                        \"book\". Must match the event name as collected."
+    )]
+    pub event_name: String,
+
+    #[schemars(
+        description = "How conversions are counted: \"ONCE_PER_EVENT\" (every occurrence) or \
+                        \"ONCE_PER_SESSION\" (at most once per session). Defaults to \
+                        \"ONCE_PER_EVENT\"."
+    )]
+    pub counting_method: Option<String>,
+
+    #[schemars(
+        description = "Optional default conversion value, as an object: \
+                        {\"numericValue\": 100.0, \"currencyCode\": \"ZAR\"}. Both fields required \
+                        together if supplied."
+    )]
+    pub default_value: Option<Value>,
+}
+
+/// Parameters for the `delete_key_event` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteKeyEventParams {
+    #[schemars(description = "GA4 property ID (bare number, string, or \"properties/12345\").")]
+    pub property_id: String,
+
+    #[schemars(
+        description = "The trailing ID of the key event to delete — the last segment of its \
+                        resource name (e.g. \"5\" from \"properties/123/keyEvents/5\"). \
+                        Use list_key_events to find it."
+    )]
+    pub key_event_id: String,
+}
+
+/// Parameters for the `create_property_annotation` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreatePropertyAnnotationParams {
+    #[schemars(description = "GA4 property ID (bare number, string, or \"properties/12345\").")]
+    pub property_id: String,
+
+    #[schemars(description = "Annotation title, e.g. \"Deployed bounding-box proximity search\".")]
+    pub title: String,
+
+    #[schemars(description = "Optional longer description of what changed.")]
+    pub description: Option<String>,
+
+    #[schemars(
+        description = "The date the annotation marks, as \"YYYY-MM-DD\". If end_date is also \
+                        given, this is the start of a date-range annotation."
+    )]
+    pub date: String,
+
+    #[schemars(
+        description = "Optional end date \"YYYY-MM-DD\" to make this a date-range annotation \
+                        instead of a single day."
+    )]
+    pub end_date: Option<String>,
+
+    #[schemars(
+        description = "Annotation color. One of: PURPLE, BROWN, BLUE, GREEN, RED, CYAN, ORANGE. \
+                        Defaults to PURPLE. (The API rejects an unset color.)"
+    )]
+    pub color: Option<String>,
+}
+
 /// Parameters for the `run_realtime_report` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RunRealtimeReportParams {

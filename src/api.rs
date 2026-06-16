@@ -98,6 +98,42 @@ impl GoogleAnalyticsClient {
         Ok(resp.json().await?)
     }
 
+    /// Make an authenticated request with an optional JSON body, tolerating empty
+    /// success responses (Admin API `:archive` and `DELETE` return an empty 200/204).
+    async fn send_json(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<Value, ApiError> {
+        let token = self.auth.access_token().await.map_err(ApiError::TokenRefresh)?;
+        debug!("{method} {url}");
+
+        let mut builder = self.http.request(method, url).timeout(timeout);
+        if let Some(b) = body {
+            builder = builder.json(b);
+        }
+        let resp = self.apply_auth(builder, &token).send().await?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(ApiError::Api {
+                status: status.as_u16(),
+                body: text,
+            });
+        }
+
+        if text.trim().is_empty() {
+            return Ok(json!({ "success": true }));
+        }
+        serde_json::from_str(&text).map_err(|e| ApiError::Api {
+            status: status.as_u16(),
+            body: format!("failed to parse response: {e}; body: {text}"),
+        })
+    }
+
     /// Auto-paginate a GET endpoint that returns items under `items_key` with `nextPageToken`.
     async fn get_all_pages(&self, base_url: &str, items_key: &str) -> Result<Value, ApiError> {
         let mut all_items: Vec<Value> = Vec::new();
@@ -195,6 +231,85 @@ impl GoogleAnalyticsClient {
         let rn = property_resource_name(property_id);
         let url = format!("{DATA_V1BETA}/{rn}:runRealtimeReport");
         self.post(&url, request_body, REPORT_TIMEOUT).await
+    }
+
+    // ── Admin API v1beta (write) ──────────────────────────────────────
+
+    /// Create a custom dimension on a property. Requires the `analytics.edit` scope.
+    pub async fn create_custom_dimension(
+        &self,
+        property_id: &str,
+        body: &Value,
+    ) -> Result<Value, ApiError> {
+        let rn = property_resource_name(property_id);
+        let url = format!("{ADMIN_V1BETA}/{rn}/customDimensions");
+        self.send_json(reqwest::Method::POST, &url, Some(body), DEFAULT_TIMEOUT)
+            .await
+    }
+
+    /// List all custom dimensions on a property (active and archived), with their
+    /// resource names — the trailing ID is what `archive_custom_dimension` needs.
+    pub async fn list_custom_dimensions(&self, property_id: &str) -> Result<Value, ApiError> {
+        let rn = property_resource_name(property_id);
+        let url = format!("{ADMIN_V1BETA}/{rn}/customDimensions");
+        self.get_all_pages(&url, "customDimensions").await
+    }
+
+    /// Archive (soft-delete) a custom dimension by its trailing ID. Requires `analytics.edit`.
+    pub async fn archive_custom_dimension(
+        &self,
+        property_id: &str,
+        custom_dimension_id: &str,
+    ) -> Result<Value, ApiError> {
+        let rn = property_resource_name(property_id);
+        let url = format!("{ADMIN_V1BETA}/{rn}/customDimensions/{custom_dimension_id}:archive");
+        self.send_json(reqwest::Method::POST, &url, None, DEFAULT_TIMEOUT)
+            .await
+    }
+
+    /// Create a key event (conversion) on a property. Requires `analytics.edit`.
+    pub async fn create_key_event(
+        &self,
+        property_id: &str,
+        body: &Value,
+    ) -> Result<Value, ApiError> {
+        let rn = property_resource_name(property_id);
+        let url = format!("{ADMIN_V1BETA}/{rn}/keyEvents");
+        self.send_json(reqwest::Method::POST, &url, Some(body), DEFAULT_TIMEOUT)
+            .await
+    }
+
+    /// List all key events (conversions) on a property, with their resource names.
+    pub async fn list_key_events(&self, property_id: &str) -> Result<Value, ApiError> {
+        let rn = property_resource_name(property_id);
+        let url = format!("{ADMIN_V1BETA}/{rn}/keyEvents");
+        self.get_all_pages(&url, "keyEvents").await
+    }
+
+    /// Delete a key event by its trailing ID. Requires `analytics.edit`.
+    pub async fn delete_key_event(
+        &self,
+        property_id: &str,
+        key_event_id: &str,
+    ) -> Result<Value, ApiError> {
+        let rn = property_resource_name(property_id);
+        let url = format!("{ADMIN_V1BETA}/{rn}/keyEvents/{key_event_id}");
+        self.send_json(reqwest::Method::DELETE, &url, None, DEFAULT_TIMEOUT)
+            .await
+    }
+
+    // ── Admin API v1alpha (write) ─────────────────────────────────────
+
+    /// Create a reporting data annotation on a property. Requires `analytics.edit`.
+    pub async fn create_property_annotation(
+        &self,
+        property_id: &str,
+        body: &Value,
+    ) -> Result<Value, ApiError> {
+        let rn = property_resource_name(property_id);
+        let url = format!("{ADMIN_V1ALPHA}/{rn}/reportingDataAnnotations");
+        self.send_json(reqwest::Method::POST, &url, Some(body), DEFAULT_TIMEOUT)
+            .await
     }
 }
 
@@ -349,4 +464,47 @@ pub fn build_realtime_report_request(
     }
 
     body
+}
+
+/// Parse a "YYYY-MM-DD" string into a GA `Date` object `{year, month, day}`.
+pub fn parse_ymd(s: &str) -> Result<Value, String> {
+    let parts: Vec<&str> = s.trim().split('-').collect();
+    if parts.len() != 3 {
+        return Err(format!("invalid date '{s}', expected YYYY-MM-DD"));
+    }
+    let year: i64 = parts[0].parse().map_err(|_| format!("invalid year in '{s}'"))?;
+    let month: i64 = parts[1].parse().map_err(|_| format!("invalid month in '{s}'"))?;
+    let day: i64 = parts[2].parse().map_err(|_| format!("invalid day in '{s}'"))?;
+    Ok(json!({ "year": year, "month": month, "day": day }))
+}
+
+/// Build a `reportingDataAnnotations` request body. A single `start_date` marks one
+/// day; supplying `end_date` makes it a date-range annotation.
+pub fn build_annotation_request(
+    title: &str,
+    description: Option<&str>,
+    start_date: &str,
+    end_date: Option<&str>,
+    color: &str,
+) -> Result<Value, String> {
+    let mut obj = Map::new();
+    obj.insert("title".into(), json!(title));
+    obj.insert("color".into(), json!(color));
+    if let Some(d) = description {
+        obj.insert("description".into(), json!(d));
+    }
+    let start = parse_ymd(start_date)?;
+    match end_date {
+        Some(e) => {
+            let end = parse_ymd(e)?;
+            obj.insert(
+                "annotationDateRange".into(),
+                json!({ "startDate": start, "endDate": end }),
+            );
+        }
+        None => {
+            obj.insert("annotationDate".into(), start);
+        }
+    }
+    Ok(Value::Object(obj))
 }

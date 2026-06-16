@@ -11,7 +11,9 @@ use tracing::{debug, info};
 use crate::config;
 
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const ANALYTICS_SCOPE: &str = "https://www.googleapis.com/auth/analytics.readonly";
+// Request both edit (Admin API writes) and readonly (Data API reports). Used for
+// service-account JWTs; authorized_user tokens carry whatever scope was consented at login.
+const ANALYTICS_SCOPE: &str = "https://www.googleapis.com/auth/analytics.edit https://www.googleapis.com/auth/analytics.readonly";
 
 /// Google credential types supported by Application Default Credentials.
 #[derive(Debug, Deserialize)]

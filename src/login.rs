@@ -13,7 +13,9 @@ use crate::config::{self, AccountConfig};
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const SCOPE: &str = "https://www.googleapis.com/auth/analytics.readonly";
+// Consent to both edit (Admin API writes) and readonly (Data API reports) so one
+// refresh token covers the full tool surface.
+const SCOPE: &str = "https://www.googleapis.com/auth/analytics.edit https://www.googleapis.com/auth/analytics.readonly";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Deserialize)]
