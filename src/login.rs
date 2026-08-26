@@ -139,9 +139,7 @@ async fn wait_for_code(listener: TcpListener) -> Result<(String, String)> {
         .collect();
 
     if let Some(err) = params.get("error") {
-        let html = format!(
-            "<html><body><h1>Login failed</h1><p>{err}</p></body></html>"
-        );
+        let html = format!("<html><body><h1>Login failed</h1><p>{err}</p></body></html>");
         let _ = write_http_response(&mut stream, 400, "Bad Request", &html).await;
         bail!("OAuth consent denied: {err}");
     }
@@ -217,9 +215,8 @@ fn write_credentials(
     refresh_token: &str,
 ) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create directory {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
 
     let payload = serde_json::json!({

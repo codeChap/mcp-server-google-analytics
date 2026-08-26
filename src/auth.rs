@@ -84,10 +84,13 @@ impl GoogleAuth {
                 .and_then(|v| v.get("quota_project_id")?.as_str().map(String::from))
         });
 
-        debug!("credential type: {:?}", match &credentials {
-            Credentials::AuthorizedUser { .. } => "authorized_user",
-            Credentials::ServiceAccount { .. } => "service_account",
-        });
+        debug!(
+            "credential type: {:?}",
+            match &credentials {
+                Credentials::AuthorizedUser { .. } => "authorized_user",
+                Credentials::ServiceAccount { .. } => "service_account",
+            }
+        );
         if let Some(ref qp) = quota_project {
             debug!("quota project: {qp}");
         }
@@ -125,14 +128,18 @@ impl GoogleAuth {
                 client_id,
                 client_secret,
                 refresh_token,
-            } => self.refresh_authorized_user(client_id, client_secret, refresh_token).await?,
+            } => {
+                self.refresh_authorized_user(client_id, client_secret, refresh_token)
+                    .await?
+            }
             Credentials::ServiceAccount {
                 client_email,
                 private_key,
                 token_uri,
             } => {
                 let uri = token_uri.as_deref().unwrap_or(TOKEN_URL);
-                self.refresh_service_account(client_email, private_key, uri).await?
+                self.refresh_service_account(client_email, private_key, uri)
+                    .await?
             }
         };
 

@@ -33,36 +33,28 @@ pub struct RunReportParams {
     )]
     pub property_id: String,
 
-    #[schemars(
-        description = "Date ranges for the report. Each object has: \
+    #[schemars(description = "Date ranges for the report. Each object has: \
                         start_date (required, YYYY-MM-DD or relative: \"today\", \"yesterday\", \"NdaysAgo\"), \
                         end_date (required, same format), \
                         name (optional). \
-                        Example: [{\"start_date\": \"30daysAgo\", \"end_date\": \"today\"}]"
-    )]
+                        Example: [{\"start_date\": \"30daysAgo\", \"end_date\": \"today\"}]")]
     pub date_ranges: Vec<Value>,
 
-    #[schemars(
-        description = "List of dimension names. See: \
+    #[schemars(description = "List of dimension names. See: \
                         https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema#dimensions \
-                        Example: [\"country\", \"city\"]"
-    )]
+                        Example: [\"country\", \"city\"]")]
     pub dimensions: Vec<String>,
 
-    #[schemars(
-        description = "List of metric names. See: \
+    #[schemars(description = "List of metric names. See: \
                         https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema#metrics \
-                        Example: [\"activeUsers\", \"sessions\"]"
-    )]
+                        Example: [\"activeUsers\", \"sessions\"]")]
     pub metrics: Vec<String>,
 
-    #[schemars(
-        description = "Optional dimension filter expression. Supports: \
+    #[schemars(description = "Optional dimension filter expression. Supports: \
                         simple filter (string_filter, numeric_filter, in_list_filter, between_filter), \
                         not_expression, and_group, or_group. \
                         Example: {\"filter\": {\"field_name\": \"country\", \
-                        \"string_filter\": {\"match_type\": \"EXACT\", \"value\": \"US\"}}}"
-    )]
+                        \"string_filter\": {\"match_type\": \"EXACT\", \"value\": \"US\"}}}")]
     pub dimension_filter: Option<Value>,
 
     #[schemars(
@@ -111,7 +103,9 @@ pub struct CreateCustomDimensionParams {
     )]
     pub parameter_name: String,
 
-    #[schemars(description = "Human-readable display name shown in the GA UI, e.g. \"Website ID\".")]
+    #[schemars(
+        description = "Human-readable display name shown in the GA UI, e.g. \"Website ID\"."
+    )]
     pub display_name: String,
 
     #[schemars(
@@ -163,11 +157,9 @@ pub struct CreateKeyEventParams {
     )]
     pub counting_method: Option<String>,
 
-    #[schemars(
-        description = "Optional default conversion value, as an object: \
+    #[schemars(description = "Optional default conversion value, as an object: \
                         {\"numericValue\": 100.0, \"currencyCode\": \"ZAR\"}. Both fields required \
-                        together if supplied."
-    )]
+                        together if supplied.")]
     pub default_value: Option<Value>,
 }
 
@@ -225,18 +217,14 @@ pub struct RunRealtimeReportParams {
     )]
     pub property_id: String,
 
-    #[schemars(
-        description = "List of realtime dimension names. See: \
+    #[schemars(description = "List of realtime dimension names. See: \
                         https://developers.google.com/analytics/devguides/reporting/data/v1/realtime-api-schema#dimensions \
-                        Example: [\"country\", \"unifiedScreenName\"]"
-    )]
+                        Example: [\"country\", \"unifiedScreenName\"]")]
     pub dimensions: Vec<String>,
 
-    #[schemars(
-        description = "List of realtime metric names. See: \
+    #[schemars(description = "List of realtime metric names. See: \
                         https://developers.google.com/analytics/devguides/reporting/data/v1/realtime-api-schema#metrics \
-                        Example: [\"activeUsers\"]"
-    )]
+                        Example: [\"activeUsers\"]")]
     pub metrics: Vec<String>,
 
     #[schemars(

@@ -1,9 +1,6 @@
 use rmcp::{
-    ErrorData as McpError, ServerHandler,
-    handler::server::tool::ToolRouter,
-    handler::server::wrapper::Parameters,
-    model::*,
-    tool, tool_handler, tool_router,
+    ErrorData as McpError, ServerHandler, handler::server::tool::ToolRouter,
+    handler::server::wrapper::Parameters, model::*, tool, tool_handler, tool_router,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -244,10 +241,8 @@ impl GoogleAnalyticsServer {
             .await
     }
 
-    #[tool(
-        description = "List all Google Ads links for a GA4 property. \
-                        Returns linked Google Ads customer IDs and their configuration."
-    )]
+    #[tool(description = "List all Google Ads links for a GA4 property. \
+                        Returns linked Google Ads customer IDs and their configuration.")]
     async fn list_google_ads_links(
         &self,
         Parameters(p): Parameters<PropertyIdParams>,

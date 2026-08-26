@@ -60,7 +60,11 @@ impl GoogleAnalyticsClient {
 
     /// Make an authenticated GET request with the given timeout.
     async fn get(&self, url: &str, timeout: Duration) -> Result<Value, ApiError> {
-        let token = self.auth.access_token().await.map_err(ApiError::TokenRefresh)?;
+        let token = self
+            .auth
+            .access_token()
+            .await
+            .map_err(ApiError::TokenRefresh)?;
         debug!("GET {url}");
 
         let builder = self.http.get(url).timeout(timeout);
@@ -80,7 +84,11 @@ impl GoogleAnalyticsClient {
 
     /// Make an authenticated POST request with a JSON body and the given timeout.
     async fn post(&self, url: &str, body: &Value, timeout: Duration) -> Result<Value, ApiError> {
-        let token = self.auth.access_token().await.map_err(ApiError::TokenRefresh)?;
+        let token = self
+            .auth
+            .access_token()
+            .await
+            .map_err(ApiError::TokenRefresh)?;
         debug!("POST {url}");
 
         let builder = self.http.post(url).json(body).timeout(timeout);
@@ -107,7 +115,11 @@ impl GoogleAnalyticsClient {
         body: Option<&Value>,
         timeout: Duration,
     ) -> Result<Value, ApiError> {
-        let token = self.auth.access_token().await.map_err(ApiError::TokenRefresh)?;
+        let token = self
+            .auth
+            .access_token()
+            .await
+            .map_err(ApiError::TokenRefresh)?;
         debug!("{method} {url}");
 
         let mut builder = self.http.request(method, url).timeout(timeout);
@@ -140,8 +152,7 @@ impl GoogleAnalyticsClient {
         let mut page_token: Option<String> = None;
 
         loop {
-            let mut url = Url::parse(base_url)
-                .expect("invalid base URL — this is a bug");
+            let mut url = Url::parse(base_url).expect("invalid base URL — this is a bug");
             url.query_pairs_mut().append_pair("pageSize", "200");
             if let Some(token) = &page_token {
                 url.query_pairs_mut().append_pair("pageToken", token);
@@ -430,7 +441,15 @@ pub fn build_report_request(
     });
 
     let obj = body.as_object_mut().unwrap();
-    insert_common_report_fields(obj, dimension_filter, metric_filter, order_bys, limit, offset, return_property_quota);
+    insert_common_report_fields(
+        obj,
+        dimension_filter,
+        metric_filter,
+        order_bys,
+        limit,
+        offset,
+        return_property_quota,
+    );
 
     if let Some(c) = currency_code {
         obj.insert("currencyCode".into(), json!(c));
@@ -457,7 +476,15 @@ pub fn build_realtime_report_request(
     });
 
     let obj = body.as_object_mut().unwrap();
-    insert_common_report_fields(obj, dimension_filter, metric_filter, order_bys, limit, offset, return_property_quota);
+    insert_common_report_fields(
+        obj,
+        dimension_filter,
+        metric_filter,
+        order_bys,
+        limit,
+        offset,
+        return_property_quota,
+    );
 
     if let Some(mr) = minute_ranges {
         obj.insert("minuteRanges".into(), snake_to_camel_case(mr));
@@ -472,9 +499,15 @@ pub fn parse_ymd(s: &str) -> Result<Value, String> {
     if parts.len() != 3 {
         return Err(format!("invalid date '{s}', expected YYYY-MM-DD"));
     }
-    let year: i64 = parts[0].parse().map_err(|_| format!("invalid year in '{s}'"))?;
-    let month: i64 = parts[1].parse().map_err(|_| format!("invalid month in '{s}'"))?;
-    let day: i64 = parts[2].parse().map_err(|_| format!("invalid day in '{s}'"))?;
+    let year: i64 = parts[0]
+        .parse()
+        .map_err(|_| format!("invalid year in '{s}'"))?;
+    let month: i64 = parts[1]
+        .parse()
+        .map_err(|_| format!("invalid month in '{s}'"))?;
+    let day: i64 = parts[2]
+        .parse()
+        .map_err(|_| format!("invalid day in '{s}'"))?;
     Ok(json!({ "year": year, "month": month, "day": day }))
 }
 

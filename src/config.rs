@@ -41,8 +41,8 @@ pub fn load_config() -> Result<Option<Config>> {
     info!("loading config from {}", path.display());
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    let config: Config = toml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let config: Config =
+        toml::from_str(&content).with_context(|| format!("failed to parse {}", path.display()))?;
 
     if config.accounts.is_empty() {
         bail!("config.toml exists but has no [[accounts]] entries");
