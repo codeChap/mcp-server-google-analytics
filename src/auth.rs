@@ -16,7 +16,7 @@ const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const ANALYTICS_SCOPE: &str = "https://www.googleapis.com/auth/analytics.edit https://www.googleapis.com/auth/analytics.readonly";
 
 /// Google credential types supported by Application Default Credentials.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 enum Credentials {
     #[serde(rename = "authorized_user")]
@@ -48,20 +48,28 @@ struct JwtClaims {
 struct TokenResponse {
     access_token: String,
     expires_in: u64,
+    #[serde(default)]
+    refresh_token: Option<String>,
 }
 
 /// Cached access token with expiry.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CachedToken {
     access_token: String,
     expires_at: u64,
 }
 
+#[derive(Clone)]
+struct Inner {
+    credentials: Credentials,
+    cached_token: Option<CachedToken>,
+}
+
 /// Handles Google OAuth2 authentication for a single set of credentials.
 pub struct GoogleAuth {
-    credentials: Credentials,
+    path: PathBuf,
     http: Client,
-    cached_token: Arc<Mutex<Option<CachedToken>>>,
+    inner: Arc<Mutex<Inner>>,
     /// Quota project ID from the credentials file or GOOGLE_PROJECT_ID env var.
     quota_project: Option<String>,
 }
@@ -96,11 +104,24 @@ impl GoogleAuth {
         }
 
         Ok(Self {
-            credentials,
+            path: path.to_path_buf(),
             http,
-            cached_token: Arc::new(Mutex::new(None)),
+            inner: Arc::new(Mutex::new(Inner {
+                credentials,
+                cached_token: None,
+            })),
             quota_project,
         })
+    }
+
+    /// Re-read the credentials file and drop the cached access token.
+    /// Used after an interactive `login` so the new refresh_token is live
+    /// without restarting the MCP process.
+    pub async fn reload(&self) -> Result<()> {
+        let reloaded = Self::from_credentials(&self.path, self.http.clone())?;
+        let mut guard = self.inner.lock().await;
+        *guard = reloaded.inner.lock().await.clone();
+        Ok(())
     }
 
     /// Returns the quota project ID, if available.
@@ -111,41 +132,73 @@ impl GoogleAuth {
     /// Get a valid access token, refreshing if needed.
     /// Uses a Mutex to prevent concurrent redundant refreshes.
     pub async fn access_token(&self) -> Result<String> {
-        let mut guard = self.cached_token.lock().await;
+        let mut guard = self.inner.lock().await;
 
-        // Check cache under the lock.
-        if let Some(token) = guard.as_ref() {
+        if let Some(token) = guard.cached_token.as_ref() {
             let now = now_secs();
             if now + 60 < token.expires_at {
                 return Ok(token.access_token.clone());
             }
         }
 
-        // Refresh token while holding the lock.
         debug!("refreshing access token");
-        let resp = match &self.credentials {
+        let (client_id, sa) = match &guard.credentials {
             Credentials::AuthorizedUser {
                 client_id,
                 client_secret,
                 refresh_token,
-            } => {
-                self.refresh_authorized_user(client_id, client_secret, refresh_token)
-                    .await?
-            }
+            } => (
+                Some((
+                    client_id.clone(),
+                    client_secret.clone(),
+                    refresh_token.clone(),
+                )),
+                None,
+            ),
             Credentials::ServiceAccount {
                 client_email,
                 private_key,
                 token_uri,
-            } => {
-                let uri = token_uri.as_deref().unwrap_or(TOKEN_URL);
-                self.refresh_service_account(client_email, private_key, uri)
-                    .await?
+            } => (
+                None,
+                Some((
+                    client_email.clone(),
+                    private_key.clone(),
+                    token_uri.clone(),
+                )),
+            ),
+        };
+
+        let resp = if let Some((client_id, client_secret, refresh_token)) = client_id {
+            let resp = self
+                .refresh_authorized_user(&client_id, &client_secret, &refresh_token)
+                .await?;
+            if let Some(new_refresh) = resp
+                .refresh_token
+                .as_deref()
+                .filter(|s| !s.is_empty() && *s != refresh_token.as_str())
+            {
+                persist_refresh_token(&self.path, new_refresh)?;
+                if let Credentials::AuthorizedUser {
+                    refresh_token: stored,
+                    ..
+                } = &mut guard.credentials
+                {
+                    *stored = new_refresh.to_string();
+                }
             }
+            resp
+        } else if let Some((client_email, private_key, token_uri)) = sa {
+            let uri = token_uri.as_deref().unwrap_or(TOKEN_URL);
+            self.refresh_service_account(&client_email, &private_key, uri)
+                .await?
+        } else {
+            bail!("unsupported credentials")
         };
 
         let now = now_secs();
         let access_token = resp.access_token.clone();
-        *guard = Some(CachedToken {
+        guard.cached_token = Some(CachedToken {
             access_token: resp.access_token,
             expires_at: now + resp.expires_in,
         });
@@ -271,6 +324,20 @@ fn default_adc_path() -> PathBuf {
         })
         .join("gcloud")
         .join("application_default_credentials.json")
+}
+
+fn persist_refresh_token(path: &Path, refresh_token: &str) -> Result<()> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read credentials: {}", path.display()))?;
+    let mut value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse credentials: {}", path.display()))?;
+    value["refresh_token"] = serde_json::Value::String(refresh_token.to_string());
+    std::fs::write(
+        path,
+        serde_json::to_string_pretty(&value).unwrap_or_default(),
+    )
+    .with_context(|| format!("failed to write credentials: {}", path.display()))?;
+    Ok(())
 }
 
 fn now_secs() -> u64 {

@@ -41,6 +41,10 @@ impl GoogleAnalyticsClient {
         Self { auth, http }
     }
 
+    pub async fn reload_auth(&self) -> Result<()> {
+        self.auth.reload().await
+    }
+
     /// Build a shared reqwest::Client with the custom user agent.
     pub fn build_http_client() -> Client {
         Client::builder()

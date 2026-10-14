@@ -326,8 +326,7 @@ impl GoogleAnalyticsServer {
                         the default browser, captures the callback, and writes a new \
                         refresh_token to the account's credentials file. \
                         Use when an existing refresh_token has been revoked or expired. \
-                        The MCP server must be restarted after success for the new token \
-                        to take effect. \
+                        Reloads the new token immediately — no process restart. \
                         Requires an OAuth Desktop-app client_id/client_secret, either in \
                         the [[accounts]] entry in config.toml or already present in the \
                         existing credentials file."
@@ -338,7 +337,16 @@ impl GoogleAnalyticsServer {
     ) -> Result<CallToolResult, McpError> {
         let http = GoogleAnalyticsClient::build_http_client();
         match login::perform_login(&p.name, &http).await {
-            Ok(msg) => Ok(CallToolResult::success(vec![Content::text(msg)])),
+            Ok(msg) => {
+                for nc in self.clients.iter() {
+                    if nc.name == p.name {
+                        if let Err(e) = nc.client.reload_auth().await {
+                            return Self::api_error(e);
+                        }
+                    }
+                }
+                Ok(CallToolResult::success(vec![Content::text(msg)]))
+            }
             Err(e) => Self::api_error(e),
         }
     }

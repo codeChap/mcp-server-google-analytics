@@ -70,7 +70,7 @@ pub async fn perform_login(name: &str, http: &Client) -> Result<String> {
 
     Ok(format!(
         "Login successful for account '{name}'. Credentials written to {}. \
-         Restart the MCP server for the new token to take effect.",
+         The new token is live without a restart.",
         creds_path.display()
     ))
 }
